@@ -283,8 +283,12 @@ void UCTNode::accumulate_eval(float eval) {
 }
 
 UCTNode* UCTNode::uct_select_child(Color color, bool is_root) {
+    myprintf("here\n");
+    myprintf("bordel\n\n");
     UCTNode* best = nullptr;
+    UCTNode* best_unexpanded = nullptr;
     auto best_value = std::numeric_limits<double>::lowest();
+    auto best_unvisited_value = std::numeric_limits<double>::lowest();
 
     LOCK(m_nodemutex, lock);
 
@@ -294,10 +298,12 @@ UCTNode* UCTNode::uct_select_child(Color color, bool is_root) {
     // Net eval can be obtained from an unvisited child. This is invalid
     // if there are no unvisited children, but then this isn't used in that case.
     auto net_eval = 0.0f;
+    auto visitedchildren = 0;
     for (const auto& child : m_children) {
         parentvisits += child->get_visits();
         if (child->get_visits() > 0) {
             total_visited_policy += child->get_score();
+            visitedchildren++;
         } else {
             net_eval = child->get_eval(color);
         }
@@ -315,6 +321,8 @@ UCTNode* UCTNode::uct_select_child(Color color, bool is_root) {
     // Estimated eval for unknown nodes = original parent NN eval - reduction
     // Or curent parent eval - reduction if dynamic_eval is enabled.
     auto fpu_eval = (cfg_fpu_dynamic_eval ? get_eval(color) : net_eval) - fpu_reduction;
+//    auto fpu_eval = get_eval(color) < 0.5 ? get_eval(color) : 0.5;
+//    auto fpu_eval = get_eval(color)*0.8;
 
     for (const auto& child : m_children) {
         if (!child->active()) {
@@ -331,12 +339,22 @@ UCTNode* UCTNode::uct_select_child(Color color, bool is_root) {
         auto value = winrate + puct;
         assert(value > std::numeric_limits<double>::lowest());
 
-        if (value > best_value) {
-            best_value = value;
-            best = child.get();
+        if (child->get_visits() > 0) {
+            if (value > best_value) {
+                best_value = value;
+                best = child.get();
+            }
+        } else if (value > best_unvisited_value) {
+            best_unvisited_value = value;
+            best_unexpanded = child.get();
         }
     }
+    // double progressive widening
+    if (std::sqrt(best->get_visits()) > 2.0*visitedchildren) {
+        best = best_unexpanded;
+    }
 
+    myprintf("there\n");
     assert(best != nullptr);
     return best;
 }
